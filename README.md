@@ -38,13 +38,23 @@ Weaviate ← 대화 기록 저장 ← 벡터 검색 ← 컨텍스트 분석 ← 
 ## 성과
 
 ### 수상 내역
-- **강원대학교 창업혁신원장상**
+<table>
+<tr>
+<td align="center" width="50%">
   
-  <img width="1058" alt="강원대 수상" src="https://github.com/user-attachments/assets/44be398f-90bb-4e2c-b9a3-d116fb998214" />
+<img src="https://github.com/user-attachments/assets/44be398f-90bb-4e2c-b9a3-d116fb998214" width="500" /><br>
+<b>강원대학교 창업혁신원장상</b>
 
-- **보건복지부 장관상**
+</td>
+<td align="center" width="50%">
 
-  <img width="1600" alt="보건복지부 장관상" src="https://github.com/user-attachments/assets/beb0c42b-ade3-439e-88ab-095d39e40df7" />
+<img src="https://github.com/user-attachments/assets/beb0c42b-ade3-439e-88ab-095d39e40df7" width="500" /><br>
+<b>보건복지부 장관상</b>
+
+</td>
+</tr>
+</table>
 
 ### 팀 & 기여
 - AI 모델 개발: STT/TTS 최적화, 한국어 대화 자연도 개선
+- TTS 기존 성능기준 생성소도 5초 -> 0초내로 최적화, Streaming 기능 구현
