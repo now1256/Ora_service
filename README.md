@@ -6,7 +6,8 @@
 
 ## 서비스 개요
 
-<img width="1095" alt="Ora Service Flow" src="https://github.com/user-attachments/assets/b3607a29-f48a-463b-a3ab-63e61516a39b" />
+<img width="1058" height="569" alt="image" src="https://github.com/user-attachments/assets/c1373d25-7da5-4911-b023-0be08d0d4fa1" />
+
 
 오라는 노년층이 **손쉽게 음성으로 대화**하며  
 - 일상적인 말벗 기능  
@@ -41,14 +42,14 @@ Weaviate ← 대화 기록 저장 ← 벡터 검색 ← 컨텍스트 분석 ← 
 <table>
 <tr>
 <td align="center" width="50%">
-  
-<img src="https://github.com/user-attachments/assets/44be398f-90bb-4e2c-b9a3-d116fb998214" width="500" /><br>
+
+<img src="https://github.com/user-attachments/assets/761d2674-4afd-40f0-a91e-17d811ba7a59" width="500" /><br>
 <b>강원대학교 창업혁신원장상</b>
 
 </td>
 <td align="center" width="50%">
 
-<img src="https://github.com/user-attachments/assets/beb0c42b-ade3-439e-88ab-095d39e40df7" width="500" /><br>
+<img src="https://github.com/user-attachments/assets/4f6450fb-4f3e-4efb-a70d-3911f22f73a9" width="500" /><br>
 <b>보건복지부 장관상</b>
 
 </td>
@@ -57,4 +58,8 @@ Weaviate ← 대화 기록 저장 ← 벡터 검색 ← 컨텍스트 분석 ← 
 
 ### 팀 & 기여
 - AI 모델 개발: STT/TTS 최적화, 한국어 대화 자연도 개선
-- TTS 기존 성능기준 생성소도 5초 -> 0초내로 최적화, Streaming 기능 구현
+- TTS 기존 성능기준 생성소도 5초 -> 1초내로 최적화, Streaming 기능 구현
+<img width="798" height="488" alt="image" src="https://github.com/user-attachments/assets/0bc7b4da-bd8b-4b4c-9a4f-b94195a3e735" />
+<img width="790" height="622" alt="image" src="https://github.com/user-attachments/assets/6e6da11a-cb81-4a2d-90e2-068674cf62b0" />
+
+
