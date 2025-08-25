@@ -1,0 +1,72 @@
+services:
+  llm_server:
+    container_name: llm_server
+    restart: always
+    build:
+      context: ./LLM_server
+      dockerfile: dockerfile
+      args:
+        BUILDKIT_INLINE_CACHE: 1
+        MAX_JOBS: 4
+    ports:
+      - "5000:5000"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    volumes:
+      - ./LLM_server:/code
+    networks:
+      - oraaiserver_ora_ai_net
+    environment:
+      - TZ=Asia/Seoul
+      - RELOAD_MODE=uvicorn
+      - DJANGO_DEBUG=True
+      - PYTHONUNBUFFERED=1
+      - DOCKER_BUILDKIT=1
+    env_file:
+      - .env
+
+  tts_server:
+    container_name: tts_server
+    restart: always 
+    build:
+      context: ./TTS_server
+      dockerfile: dockerfile
+      args:
+        BUILDKIT_INLINE_CACHE: 1
+        MAX_JOBS: 4
+    ports:
+      - "5002:5002"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    volumes:
+      - ./TTS_server:/code
+    networks:
+      - oraaiserver_ora_ai_net
+    environment:
+      - TZ=Asia/Seoul
+      - RELOAD_MODE=uvicorn
+      - DJANGO_DEBUG=True
+      - PYTHONUNBUFFERED=1
+      - PYTHONPATH=/code/TTS_server/TTS/TTS
+      - DJANGO_ALLOWED_HOSTS=*
+      - DJANGO_SETTINGS_MODULE=TTS_server.settings
+      - DOCKER_BUILDKIT=1
+    env_file:
+      - .env
+
+
+networks:
+  oraaiserver_ora_ai_net:
+    driver: bridge
+
+

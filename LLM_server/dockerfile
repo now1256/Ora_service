@@ -1,0 +1,59 @@
+# Python 3.10을 기반으로 한 공식 이미지 사용
+FROM python:3.10-slim-bookworm
+
+ENV TZ=Asia/Seoul
+RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
+# 작업 디렉토리 설정
+WORKDIR /code
+
+# 필수 시스템 패키지 설치 (git 포함)
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    python3-dev \
+    ffmpeg\
+    git \
+    && rm -rf /var/lib/apt/lists/*
+
+# pip 업그레이드 및 Cython 설치
+# --no-cache-dir은 일반적으로 패키지 설치 시 적용됩니다.
+RUN pip install --upgrade pip setuptools wheel Cython
+
+RUN pip install faiss-gpu
+
+# 핵심 Python 패키지 설치
+# 여기에 --no-cache-dir을 추가할 수 있습니다.
+RUN pip install --no-cache-dir Django uvicorn gunicorn channels daphne
+
+# 레포지토리 클론 및 관련 의존성 설치
+RUN git clone https://github.com/teddylee777/langchain-teddynote.git /tmp/langchain-teddynote
+
+# 레포지토리에 올바른 설치 파일이 있는지 확인 (디버깅용)
+RUN ls -la /tmp/langchain-teddynote/
+
+# 클론된 레포지토리의 requirements.txt를 먼저 설치
+# 여기에 --no-cache-dir을 추가합니다.
+RUN if [ -f /tmp/langchain-teddynote/requirements.txt ]; then pip install --no-cache-dir -r /tmp/langchain-teddynote/requirements.txt; fi
+
+# 클론된 레포지토리를 편집 모드로 설치
+# -e (editable) 모드에서는 --no-cache-dir이 필요하지 않거나 다르게 동작할 수 있습니다.
+# 일반적인 pip install -e에는 --no-cache-dir을 사용하지 않습니다.
+RUN cd /tmp/langchain-teddynote && pip install -e .
+
+# 로컬 애플리케이션의 `requirements.txt` 파일만 먼저 복사
+COPY requirements.txt .
+
+# 로컬 애플리케이션의 의존성 설치
+# 여기에 --no-cache-dir을 추가합니다.
+RUN pip install --no-cache-dir -r requirements.txt
+
+# 나머지 로컬 애플리케이션 파일들을 작업 디렉토리로 복사
+COPY . /code
+
+# `start_gunicorn.sh` 스크립트에 실행 권한 부여
+RUN chmod +x start_gunicorn.sh
+
+# 컨테이너가 노출할 포트 명시
+EXPOSE 5000
+
+# 컨테이너 시작 시 실행될 명령어
+CMD ["./start_gunicorn.sh"]

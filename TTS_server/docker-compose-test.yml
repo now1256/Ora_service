@@ -1,0 +1,23 @@
+version: '3.8'
+
+services:
+  tts_server_websocket:
+    container_name: tts_server_websocket
+    build:
+      context: .
+      dockerfile: dockerfile
+    ports:
+      - "5002:5002"  # WebSocket 포트
+    environment:
+      - PYTHONUNBUFFERED=1
+      - DJANGO_DEBUG=True
+      - DJANGO_SETTINGS_MODULE=TTS_server.settings
+    volumes:
+      - ./:/code
+    command: daphne -b 0.0.0.0 -p 5002 TTS_server.asgi:application
+    networks:
+      - tts_network
+
+networks:
+  tts_network:
+    driver: bridge

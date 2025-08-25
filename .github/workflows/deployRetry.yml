@@ -1,0 +1,103 @@
+name: 🚀 ORA AI 서버 재배포 (선택적)
+
+on:
+  workflow_dispatch:
+
+env:
+  AWS_REGION: ap-northeast-2
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  redeploy:
+    name: 🔄 AI 서버 재배포 (ECR latest → Bastion → Compose)
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: AWS 인증 (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::319641749746:role/ai-server-backup
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: redeploy-${{ github.run_id }}
+
+      - name: ECR 토큰 발급
+        id: token
+        run: |
+          set -euo pipefail
+          echo "token=$(aws ecr get-login-password --region $AWS_REGION)" >> $GITHUB_OUTPUT
+
+      - name: Bastion SSH 키 설정
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.BASTION_SSH_KEY }}" > ~/.ssh/bastion_key.pem
+          chmod 600 ~/.ssh/bastion_key.pem
+
+      - name: Bastion 경유 AI 서버 선택적 재배포
+        env:
+          AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+          AWS_REGION:      ${{ env.AWS_REGION }}
+          BASTION_USER:    ${{ secrets.BASTION_USER }}
+          BASTION_HOST:    ${{ secrets.BASTION_HOST }}
+          TARGET_USER:     ${{ secrets.TARGET_USER }}
+          TARGET_HOST:     ${{ secrets.TARGET_HOST }}
+          ECR_TOKEN:       ${{ steps.token.outputs.token }}
+        run: |
+          set -euo pipefail
+
+          # 필수 값 확인
+          : "${BASTION_USER:?BASTION_USER missing}"
+          : "${BASTION_HOST:?BASTION_HOST missing}"
+          : "${TARGET_USER:?TARGET_USER missing}"
+          : "${TARGET_HOST:?TARGET_HOST missing}"
+
+          REGISTRY="$AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com"
+
+          ssh -o StrictHostKeyChecking=no -i ~/.ssh/bastion_key.pem \
+            "${BASTION_USER}@${BASTION_HOST}" bash -s <<DEPLOY
+          set -euo pipefail
+
+          ssh -o StrictHostKeyChecking=no -i ~/ora-ai.pem \
+            "${TARGET_USER}@${TARGET_HOST}" bash -s <<INNER
+          set -euo pipefail
+
+          echo "🔐 ECR 로그인 중..."
+          echo "${ECR_TOKEN}" | docker login --username AWS --password-stdin "${REGISTRY}"
+
+          echo "⏹️  AI 서버들만 중지 중..."
+          cd ~
+          # AI 서버 3개만 선택적으로 중지 및 제거 (인프라는 유지)
+          docker compose -f compose.yml stop llm_server  tts_server || true
+          docker compose -f compose.yml rm -f llm_server  tts_server || true
+
+          echo "📥 AI 서버 최신 이미지 다운로드 중..."
+          # AI 서버 이미지만 pull
+          docker compose -f compose.yml pull llm_server  tts_server
+
+          echo "🚀 AI 서버들 재시작 중..."
+          # AI 서버들만 새로 시작 (인프라 서비스들은 그대로 유지)
+          docker compose -f compose.yml up -d llm_server  tts_server
+
+          echo "🧹 사용하지 않는 이미지만 정리 중..."
+          # 사용하지 않는 이미지만 정리 (볼륨과 네트워크는 보존)
+          docker image prune -af || true
+          
+          echo "✅ AI 서버 배포 상태 확인..."
+          # AI 서버들 상태 확인
+          docker compose -f compose.yml ps llm_server  tts_server
+          docker ps --filter "name=llm_server" --filter  "name=tts_server" --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}'
+          
+          echo "📊 디스크 사용량 확인..."
+          df -h / || true
+          docker system df || true
+          INNER
+          DEPLOY
+
+      - name: ✅ 재배포 완료
+        run: |
+          echo "🎉 AI 서버 선택적 재배포 완료!"
+          echo "- LLM/TTS 서버만 latest 이미지로 업데이트"
+          echo "- 인프라 서비스들(Kafka, Redis 등)은 유지"
+          echo "- 빌드 없이 ECR latest 이미지 사용"

@@ -1,0 +1,60 @@
+# Python 3.11을 기반으로 한 공식 이미지 사용 (원래 버전으로 복귀)
+FROM python:3.11-slim
+
+# 작업 디렉토리 설정
+WORKDIR /code
+
+# 필수 시스템 패키지 설치 (Rust 컴파일러 포함)
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    python3-dev \
+    ffmpeg \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Rust 컴파일러 설치 (sudachipy를 위해 필요)
+RUN curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y
+ENV PATH="/root/.cargo/bin:${PATH}"
+
+
+# pip 업그레이드 및 Cython 설치
+RUN pip install --upgrade pip setuptools wheel Cython
+
+
+# 핵심 Python 패키지 먼저 설치 (WebSocket 지원 포함)
+RUN pip install --no-cache-dir Django uvicorn gunicorn channels daphne websockets channels-redis
+
+# 로컬 애플리케이션의 requirements.txt 파일 복사
+COPY requirements.txt .
+
+# 로컬 애플리케이션의 의존성 설치 (Rust PATH 확인 후)
+RUN . ~/.cargo/env && pip install --no-cache-dir --prefer-binary \
+    -r requirements.txt \
+    --extra-index-url https://download.pytorch.org/whl/cu128
+
+# NLTK 데이터 다운로드 (영어 태거 포함)
+RUN python -c "import nltk; \
+    nltk.download('averaged_perceptron_tagger'); \
+    nltk.download('averaged_perceptron_tagger_eng'); \
+    nltk.download('punkt'); \
+    nltk.download('punkt_tab'); \
+    nltk.download('maxent_ne_chunker'); \
+    nltk.download('words'); \
+    nltk.download('cmudict')"
+
+# 나머지 로컬 애플리케이션 파일들을 작업 디렉토리로 복사
+COPY . /code
+
+# NLTK 데이터 경로 환경변수 설정
+ENV NLTK_DATA=/usr/share/nltk_data
+
+# 모든 .sh 파일에 실행 권한 부여
+RUN chmod +x /code/*.sh || true
+
+# 컨테이너가 노출할 포트 명시
+EXPOSE 5002
+
+# 엔트리포인트 사용
+ENTRYPOINT ["/code/entrypoint.sh"]
+
+

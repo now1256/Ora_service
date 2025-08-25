@@ -1,0 +1,5 @@
+# WebSocket 서버 기능을 위한 추가 패키지
+channels==4.0.0
+channels-redis==4.1.0
+daphne==4.0.0
+websockets==11.0.3

@@ -1,0 +1,288 @@
+name: 🚀 ECR 배포
+
+on:
+  workflow_dispatch:
+
+env:
+  AWS_REGION: ap-northeast-2
+
+jobs:
+  build-and-push:
+    name: 🐳 ${{ matrix.service }} 빌드 & 푸시
+    runs-on: ubuntu-latest
+    
+    permissions:
+      id-token: write
+      contents: read
+    
+    strategy:
+      matrix:
+        include:
+          - service: llm-server
+            directory: LLM_server
+            dockerfile: dockerfile
+            description: "대화형 AI 모델 서버"
+         
+          - service: tts-server
+            directory: TTS_server
+            dockerfile: dockerfile
+            description: "텍스트를 음성으로 변환"
+    
+    steps:
+      - name: 📥 코드 체크아웃
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          clean: true
+          token: ${{ secrets.GITHUB_TOKEN }}
+          ref: ${{ github.ref_name }}
+        
+      - name: 📋 서비스 정보 출력
+        run: |
+          echo "🎯 배포 대상: ${{ matrix.service }}"
+          echo "📝 설명: ${{ matrix.description }}"
+          echo "📁 디렉토리: ${{ matrix.directory }}"
+          echo "🐳 Dockerfile: ${{ matrix.dockerfile }}"
+          echo "🌿 브랜치: ${{ github.ref_name }}"
+          echo "📝 커밋: ${{ github.sha }}"
+          echo "👤 작성자: ${{ github.actor }}"
+
+      - name: 🔍 AWS 설정 확인
+        run: |
+          echo "🔍 AWS 계정 ID: ${{ secrets.AWS_ACCOUNT_ID }}"
+          echo "🌍 AWS 리전: ${{ secrets.AWS_REGION }}"
+          echo "🎯 역할 ARN: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/ora-ecr-oicdrole"
+          echo "📂 GitHub 리포지토리: ${{ github.repository }}"
+          echo "🔗 GitHub Actor: ${{ github.actor }}"
+          echo "🌿 GitHub Ref: ${{ github.ref }}"
+
+      - name: 🔐 AWS 인증 설정 (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::319641749746:role/ai-server-backup
+          aws-region: ${{ secrets.AWS_REGION }}
+          role-session-name: GitHubActions-${{ matrix.service }}-${{ github.run_id }}
+
+      - name: ✅ AWS 인증 확인
+        run: |
+          echo "🔍 AWS 인증 상태 확인..."
+          aws sts get-caller-identity
+          echo "✅ AWS 인증 성공!"
+
+      - name: 🏪 Amazon ECR 로그인
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: 🔍 디렉토리 구조 상세 확인
+        run: |
+          echo "📁 현재 작업 디렉토리:"
+          pwd
+          echo "🌿 현재 브랜치:"
+          git branch
+          echo "📂 루트 디렉토리 내용:"
+          ls -la
+          echo "📂 모든 하위 디렉토리 확인 (깊이 3):"
+          find . -maxdepth 3 -type d | sort
+          echo "📂 Server 관련 디렉토리만 검색:"
+          find . -maxdepth 2 -type d -iname "*server*" | sort
+          echo "📂 모든 dockerfile 검색:"
+          find . -name "dockerfile" -o -name "Dockerfile" -o -name "*.dockerfile" | sort
+          echo "📂 Python 관련 파일 검색:"
+          find . -name "*.py" -o -name "requirements.txt" -o -name "manage.py" | head -10
+          echo "📂 대상 디렉토리 확인 (${{ matrix.directory }}):"
+          if [ -d "${{ matrix.directory }}" ]; then
+            echo "✅ ${{ matrix.directory }} 디렉토리 존재"
+            ls -la "${{ matrix.directory }}"
+            echo "📂 ${{ matrix.directory }} 내부 파일들:"
+            find "${{ matrix.directory }}" -type f -name "*dockerfile*" -o -name "*.py" -o -name "requirements.txt" | head -5
+          else
+            echo "❌ ${{ matrix.directory }} 디렉토리 없음"
+            echo "🔍 비슷한 서버 디렉토리 검색:"
+            ls -la | grep -i server || echo "server 관련 디렉토리 없음"
+            echo "🔍 대안 디렉토리 검색:"
+            find . -maxdepth 2 -type d -name "*$(echo ${{ matrix.service }} | sed 's/-/_/g')*" -o -name "*$(echo ${{ matrix.service }} | sed 's/_/-/g')*" | head -5
+          fi
+
+      - name: 🏗️ ECR 리포지토리 확인 (ai-server-backup 사용)
+        run: |
+          echo "🔍 ECR 리포지토리 확인: ai-server-backup"
+          
+          if aws ecr describe-repositories --repository-names ai-server-backup --region ${{ secrets.AWS_REGION }} 2>/dev/null; then
+            echo "✅ ECR 리포지토리 'ai-server-backup' 이미 존재"
+          else
+            echo "🏗️ ECR 리포지토리 'ai-server-backup' 생성 중..."
+            aws ecr create-repository \
+              --repository-name ai-server-backup \
+              --region ${{ secrets.AWS_REGION }} \
+              --image-scanning-configuration scanOnPush=true
+            echo "✅ ECR 리포지토리 'ai-server-backup' 생성 완료"
+          fi
+
+      - name: 🐳 ${{ matrix.service }} 이미지 빌드 & ECR 푸시
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+          SHORT_SHA: ${{ github.sha }}
+        run: |
+          echo "🚀 === ${{ matrix.service }} ECR 배포 시작 ==="
+          echo "📋 서비스: ${{ matrix.service }}"
+          echo "📝 설명: ${{ matrix.description }}"
+          echo "🌍 리전: ${{ secrets.AWS_REGION }}"
+          
+          # ECR 이미지 URI 생성 (ai-server-backup 리포지토리 사용)
+          ECR_IMAGE_URI=${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com/ai-server-backup
+          SHORT_SHA=$(echo ${{ github.sha }} | cut -c1-7)
+          
+          echo "🔗 ECR URI: $ECR_IMAGE_URI"
+          echo "🏷️  태그: latest, $SHORT_SHA, ${{ github.sha }}"
+          
+          # Dockerfile 경로 확인 (현재 브랜치 구조 적응형)
+          echo "🔍 ${{ matrix.service }} Dockerfile 검색 시작..."
+          
+          DOCKERFILE_PATH=""
+          BUILD_CONTEXT=""
+          
+          # 1단계: 정확한 경로 확인
+          if [ -d "${{ matrix.directory }}" ] && [ -f "${{ matrix.directory }}/${{ matrix.dockerfile }}" ]; then
+            DOCKERFILE_PATH="${{ matrix.directory }}/${{ matrix.dockerfile }}"
+            BUILD_CONTEXT="${{ matrix.directory }}"
+            echo "✅ 정확한 경로에서 발견: $DOCKERFILE_PATH"
+          else
+            echo "⚠️ 정확한 경로에서 찾지 못함: ${{ matrix.directory }}/${{ matrix.dockerfile }}"
+            
+            # 2단계: 서비스명 기반 디렉토리 검색
+            SERVICE_PATTERNS=(
+              "${{ matrix.service }}"
+              "$(echo ${{ matrix.service }} | sed 's/-/_/g')"
+              "$(echo ${{ matrix.service }} | sed 's/_/-/g')"
+              "$(echo ${{ matrix.service }} | tr '[:lower:]' '[:upper:]')"
+              "$(echo ${{ matrix.service }} | tr '[:upper:]' '[:lower:]')"
+            )
+            
+            for pattern in "${SERVICE_PATTERNS[@]}"; do
+              echo "🔍 패턴 검색: $pattern"
+              # 대소문자 무시하고 디렉토리 검색
+              FOUND_DIR=$(find . -maxdepth 2 -type d -iname "*${pattern}*" | head -1)
+              if [ -n "$FOUND_DIR" ]; then
+                # 해당 디렉토리에서 dockerfile 검색
+                FOUND_DOCKERFILE=$(find "$FOUND_DIR" -iname "*dockerfile*" -type f | head -1)
+                if [ -n "$FOUND_DOCKERFILE" ]; then
+                  DOCKERFILE_PATH="$FOUND_DOCKERFILE"
+                  BUILD_CONTEXT="$FOUND_DIR"
+                  echo "✅ 패턴 매칭으로 발견: $DOCKERFILE_PATH (디렉토리: $FOUND_DIR)"
+                  break
+                fi
+              fi
+            done
+            
+            # 3단계: 전체 프로젝트에서 서비스명 포함 dockerfile 검색
+            if [ -z "$DOCKERFILE_PATH" ]; then
+              echo "🔍 전체 프로젝트에서 서비스 관련 dockerfile 검색 중..."
+              for pattern in "${SERVICE_PATTERNS[@]}"; do
+                FOUND_DOCKERFILE=$(find . -path "*${pattern}*" -iname "*dockerfile*" -type f | head -1)
+                if [ -n "$FOUND_DOCKERFILE" ]; then
+                  DOCKERFILE_PATH="$FOUND_DOCKERFILE"
+                  BUILD_CONTEXT=$(dirname "$FOUND_DOCKERFILE")
+                  echo "✅ 전체 검색으로 발견: $DOCKERFILE_PATH"
+                  break
+                fi
+              done
+            fi
+          fi
+          
+          # 최종 검증
+          if [ -z "$DOCKERFILE_PATH" ] || [ ! -f "$DOCKERFILE_PATH" ]; then
+            echo "❌ ${{ matrix.service }} 빌드 실패: Dockerfile을 찾을 수 없음"
+            echo "🔍 사용 가능한 모든 dockerfile:"
+            find . -iname "*dockerfile*" -type f
+            echo "🔍 사용 가능한 모든 디렉토리:"
+            find . -maxdepth 2 -type d | grep -E "(server|Server|SERVER)" || echo "server 관련 디렉토리 없음"
+            exit 1
+          fi
+          
+          echo "🎯 최종 선택된 Dockerfile: $DOCKERFILE_PATH"
+          echo "📁 빌드 컨텍스트: $BUILD_CONTEXT"
+          
+          # 빌드 시작
+          echo "🔨 ${{ matrix.service }} 이미지 빌드 시작..."
+          BUILD_START=$(date +%s)
+          
+          # Docker 빌드 (서비스별 태그)
+          docker build \
+            -t $ECR_IMAGE_URI:${{ matrix.service }}-latest \
+            -t $ECR_IMAGE_URI:${{ matrix.service }}-$SHORT_SHA \
+            -t $ECR_IMAGE_URI:${{ matrix.service }}-${{ github.sha }} \
+            -f "$DOCKERFILE_PATH" \
+            "$BUILD_CONTEXT"
+          
+          if [ $? -eq 0 ]; then
+            BUILD_END=$(date +%s)
+            BUILD_DURATION=$((BUILD_END - BUILD_START))
+            echo "✅ ${{ matrix.service }} 빌드 완료! (소요시간: ${BUILD_DURATION}초)"
+          else
+            echo "❌ ${{ matrix.service }} 빌드 실패!"
+            exit 1
+          fi
+          
+          # ECR에 이미지 푸시
+          echo "⬆️ ${{ matrix.service }} ECR 푸시 시작..."
+          PUSH_START=$(date +%s)
+          
+          # 여러 태그로 푸시 (서비스별 태그)
+          docker push $ECR_IMAGE_URI:${{ matrix.service }}-latest
+          docker push $ECR_IMAGE_URI:${{ matrix.service }}-$SHORT_SHA
+          docker push $ECR_IMAGE_URI:${{ matrix.service }}-${{ github.sha }}
+          
+          if [ $? -eq 0 ]; then
+            PUSH_END=$(date +%s)
+            PUSH_DURATION=$((PUSH_END - PUSH_START))
+            echo "✅ ${{ matrix.service }} ECR 푸시 완료! (소요시간: ${PUSH_DURATION}초)"
+          else
+            echo "❌ ${{ matrix.service }} ECR 푸시 실패!"
+            exit 1
+          fi
+          
+          # 환경 변수 설정
+          echo "ECR_IMAGE_URI_${{ matrix.service }}=$ECR_IMAGE_URI:${{ matrix.service }}-${{ github.sha }}" >> $GITHUB_ENV
+          echo "🎉 ${{ matrix.service }} 이미지가 ai-server-backup 리포지토리에 배포 완료!"
+
+      - name: 📋 ${{ matrix.service }} 배포 결과 요약
+        run: |
+          echo "🎯 === ${{ matrix.service }} 배포 완료 요약 ==="
+          echo "📦 서비스: ${{ matrix.service }}"
+          echo "📝 설명: ${{ matrix.description }}"
+          echo "🏷️  이미지 태그: ${{ matrix.service }}-latest, ${{ matrix.service }}-$(echo ${{ github.sha }} | cut -c1-7), ${{ matrix.service }}-${{ github.sha }}"
+          echo "📍 ECR 리포지토리: ai-server-backup"
+          echo "🔗 ECR URI: ${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ secrets.AWS_REGION }}.amazonaws.com/ai-server-backup"
+          echo "🌿 브랜치: ${{ github.ref_name }}"
+          echo "📝 커밋: ${{ github.sha }}"
+          echo "👤 작성자: ${{ github.actor }}"
+          echo "📁 빌드 컨텍스트: ${{ matrix.directory }}"
+          echo "🐳 Dockerfile: ${{ matrix.dockerfile }}"
+          echo "⏰ 완료 시간: $(date)"
+          echo "✅ ${{ matrix.service }} 이미지가 ai-server-backup ECR 리포지토리에 성공적으로 배포되었습니다!"
+          echo "=========================================="
+          
+  # 모든 서비스 배포 완료 후 요약
+  deploy-summary:
+    name: 📊 전체 배포 완료 요약
+    runs-on: ubuntu-latest
+    needs: build-and-push
+    if: always()
+    steps:
+      - name: 📋 전체 배포 결과 요약
+        run: |
+          echo "🎯 === 전체 ECR 배포 완료 요약 ==="
+          echo "📦 배포된 서비스: llm-server, tts-server"
+          echo "🌍 AWS 리전: ap-northeast-2"
+          echo "📍 ECR 리포지토리: ai-server-backup"
+          echo "🔗 ECR URI: 319641749746.dkr.ecr.ap-northeast-2.amazonaws.com/ai-server-backup"
+          echo "🏷️  배포된 이미지 태그:"
+          echo "  - llm-server-latest, llm-server-$(echo ${{ github.sha }} | cut -c1-7), llm-server-${{ github.sha }}"
+          echo "  - tts-server-latest, tts-server-$(echo ${{ github.sha }} | cut -c1-7), tts-server-${{ github.sha }}"
+          echo "🌿 브랜치: ${{ github.ref_name }}"
+          echo "📝 커밋: ${{ github.sha }}"
+          echo "👤 작성자: ${{ github.actor }}"
+          echo "⏰ 완료 시간: $(date)"
+          echo "🎉 모든 서비스 이미지가 ai-server-backup ECR 리포지토리에 성공적으로 배포되었습니다!"
+          echo "==================================================" 

@@ -1,0 +1,166 @@
+name: 🚀 ORA AI 서버 (LLM/TTS) 배포
+
+on:
+  push:
+    branches: ["main"]
+  workflow_dispatch:
+
+env:
+  AWS_REGION: ap-northeast-2
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  build_and_push:
+    name: 🏗️ 이미지 빌드 & ECR 푸시
+    runs-on: ubuntu-latest
+
+    permissions:
+      id-token: write
+      contents: read
+
+    strategy:
+      matrix:
+        include:
+          - service: llm-server
+            directory: LLM_server
+            dockerfile: dockerfile
+          
+          - service: tts-server
+            directory: TTS_server
+            dockerfile: dockerfile
+
+    steps:
+      - name: 코드 체크아웃
+        uses: actions/checkout@v4
+
+      - name: AWS 인증 (OIDC AssumeRole)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::319641749746:role/ai-server-backup
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: GitHubActions-${{ github.run_id }}-${{ matrix.service }}
+
+      - name: ECR 로그인
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Docker 빌드 & 푸시 (${{ matrix.service }})
+        env:
+          ECR_REGISTRY: ${{ steps.login-ecr.outputs.registry }}
+          IMAGE_TAG: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+
+          SERVICE=${{ matrix.service }}
+          DIR=${{ matrix.directory }}
+          DOCKERFILE=${{ matrix.dockerfile }}
+
+          ECR_IMAGE_URI=${{ secrets.AWS_ACCOUNT_ID }}.dkr.ecr.${{ env.AWS_REGION }}.amazonaws.com/${SERVICE}
+
+          echo "Building ${SERVICE} from ${DIR}/${DOCKERFILE}"
+          docker build -f "${DIR}/${DOCKERFILE}" -t "${ECR_IMAGE_URI}:${IMAGE_TAG}" "${DIR}"
+          docker tag "${ECR_IMAGE_URI}:${IMAGE_TAG}" "${ECR_IMAGE_URI}:latest"
+
+          echo "Pushing ${SERVICE} to ECR"
+          docker push "${ECR_IMAGE_URI}:${IMAGE_TAG}"
+          docker push "${ECR_IMAGE_URI}:latest"
+
+  deploy:
+    name: 🚀 AI 서버 원격 배포 (docker compose)
+    runs-on: ubuntu-latest
+    needs: build_and_push
+
+    permissions:
+      id-token: write
+      contents: read
+
+    env:
+      AWS_REGION: ap-northeast-2
+
+    steps:
+      - name: AWS 인증 (OIDC AssumeRole)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::319641749746:role/ai-server-backup
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: GitHubActions-${{ github.run_id }}-deploy
+
+      - name: ECR 토큰 발급
+        id: token
+        run: |
+          set -euo pipefail
+          echo "token=$(aws ecr get-login-password --region $AWS_REGION)" >> $GITHUB_OUTPUT
+
+      - name: Bastion SSH 키 설정
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.BASTION_SSH_KEY }}" > ~/.ssh/bastion_key.pem
+          chmod 600 ~/.ssh/bastion_key.pem
+
+      - name: Bastion 경유 Compose 배포 
+        env:
+          AWS_ACCOUNT_ID: ${{ secrets.AWS_ACCOUNT_ID }}
+          AWS_REGION:      ${{ env.AWS_REGION }}
+          BASTION_USER:    ${{ secrets.BASTION_USER }}
+          BASTION_HOST:    ${{ secrets.BASTION_HOST }}
+          TARGET_USER:     ${{ secrets.TARGET_USER }}
+          TARGET_HOST:     ${{ secrets.TARGET_HOST }}
+          ECR_TOKEN:       ${{ steps.token.outputs.token }}
+        run: |
+          set -euo pipefail
+
+          # 필수 값 확인
+          : "${BASTION_USER:?BASTION_USER missing}"
+          : "${BASTION_HOST:?BASTION_HOST missing}"
+          : "${TARGET_USER:?TARGET_USER missing}"
+          : "${TARGET_HOST:?TARGET_HOST missing}"
+
+          REGISTRY="$AWS_ACCOUNT_ID.dkr.ecr.$AWS_REGION.amazonaws.com"
+
+          ssh -o StrictHostKeyChecking=no -i ~/.ssh/bastion_key.pem \
+            "${BASTION_USER}@${BASTION_HOST}" bash -s <<DEPLOY
+          set -euo pipefail
+
+          ssh -o StrictHostKeyChecking=no -i ~/ora-ai.pem ${TARGET_USER}@${TARGET_HOST} bash -s <<INNER
+          set -euo pipefail
+
+          echo "🔐 ECR 로그인 중..."
+          echo "$ECR_TOKEN" | docker login --username AWS --password-stdin "${REGISTRY}"
+
+          echo "⏹️  AI 서버들만 중지 중..."
+          cd ~
+          docker compose -f compose.yml stop llm_server  tts_server || true
+          docker compose -f compose.yml rm -f llm_server tts_server || true
+
+          echo "📥 최신 이미지 다운로드 중..."
+          # 최신 이미지 pull
+          docker compose -f compose.yml pull
+
+          echo "🚀 새 서비스 시작 중..."
+          # 새로운 컨테이너로 서비스 시작
+          docker compose -f compose.yml up -d
+
+          echo "🧹 시스템 정리 중..."
+          # 사용하지 않는 리소스 정리
+          docker system prune -af --volumes || true
+          
+          echo "✅ 배포 상태 확인..."
+          # 서비스 상태 확인
+          docker compose -f compose.yml ps
+          docker ps --format 'table {{.Names}}\t{{.Image}}\t{{.Status}}\t{{.Ports}}'
+          
+          echo "📊 디스크 사용량 확인..."
+          df -h / || true
+          docker system df || true
+          INNER
+          DEPLOY
+
+      - name: ✅ 배포 완료
+        run: |
+          echo "🎉 LLM/TTS 재배포 완료!"
+          echo "- 기존 서비스 완전 정리"
+          echo "- 최신 이미지로 새 서비스 시작"
+          echo "- 시스템 리소스 정리"
